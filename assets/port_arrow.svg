@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <!-- Placeholder output-port marker: a chevron/arrow pointing "north" (+Z / up in this
+       texture's local space), matching the orange marker-stroke look described verbally
+       (rough brush-stroke rectangle, ragged top edge) closely enough to validate port
+       position/rotation placement. Swap this file for a real hand-drawn asset later -
+       the extractor only cares that port_arrow.png exists at this path. -->
+  <path d="M 90,190 L 90,120 Q 88,95 115,92 L 400,80 Q 428,82 424,110 L 420,175 Q 418,195 395,192 L 110,205 Q 92,203 90,190 Z"
+        fill="#f5941e" />
+</svg>
