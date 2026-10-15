@@ -10,7 +10,12 @@ namespace Chaiser
     // _EmissiveMap texture (T_fac_build_pedestal+1_003_E) layered on top of the base color via
     // the glTF material's own emissive channel, matching how the game's shader keeps them as
     // separate texture slots (_BaseColorMap, _EmissiveMap) rather than one baked image.
-    public record GltfMaterialSlot(int IndexStart, int IndexCount, byte[] BaseColorPng, byte[] EmissivePng, string MaterialName);
+    public record GltfMaterialSlot(int IndexStart, int IndexCount, byte[] BaseColorPng, byte[] EmissivePng, string MaterialName,
+        byte[] NormalPng = null, byte[] OrmPng = null);
+
+    // One resolved material slot before index offsets are laid out: textures already in glTF's
+    // layout (see BuildingExtractor.ResolveSurfacePngs).
+    public record MaterialSlotData(int IndexCount, byte[] BaseColorPng, byte[] EmissivePng, byte[] NormalPng, byte[] OrmPng, string Name);
 
     // Raw geometry for one glTF mesh/node, decoupled from AnimeStudio's Mesh class so synthetic
     // geometry (e.g. a flat port-marker quad, which has no backing game asset at all) can be
@@ -35,14 +40,14 @@ namespace Chaiser
         // post-destripify/quad-conversion triangle-index count, so a running offset over
         // mesh.m_SubMeshes gives an exact, already-triangulated slice per slot - no separate
         // byte-offset math needed.
-        public static GltfPart FromMesh(Mesh mesh, IReadOnlyList<(int indexCount, byte[] baseColorPng, byte[] emissivePng, string materialName)> resolvedMaterials)
+        public static GltfPart FromMesh(Mesh mesh, IReadOnlyList<MaterialSlotData> resolvedMaterials)
         {
             var materialSlots = new List<GltfMaterialSlot>();
             var indexOffset = 0;
-            foreach (var (indexCount, baseColorPng, emissivePng, materialName) in resolvedMaterials)
+            foreach (var m in resolvedMaterials)
             {
-                materialSlots.Add(new GltfMaterialSlot(indexOffset, indexCount, baseColorPng, emissivePng, materialName));
-                indexOffset += indexCount;
+                materialSlots.Add(new GltfMaterialSlot(indexOffset, m.IndexCount, m.BaseColorPng, m.EmissivePng, m.Name, m.NormalPng, m.OrmPng));
+                indexOffset += m.IndexCount;
             }
 
             return new GltfPart(mesh.Name, mesh.m_VertexCount, mesh.m_Vertices, mesh.m_Normals, mesh.m_UV0, mesh.m_Indices, materialSlots);
@@ -354,6 +359,11 @@ namespace Chaiser
                             usedEmissiveStrengthExtension = true;
                         }
 
+                        // Surface maps: one ORM texture serves both metallic-roughness and
+                        // occlusion, as glTF allows; the factors then pass the texture through.
+                        var normalTexture = slot.NormalPng != null ? new { index = WriteImageAndGetTextureIndex(slot.NormalPng) } : null;
+                        var ormTextureIdx = slot.OrmPng != null ? WriteImageAndGetTextureIndex(slot.OrmPng) : -1;
+
                         materialIdx = materials.Count;
                         materials.Add(new
                         {
@@ -361,9 +371,12 @@ namespace Chaiser
                             pbrMetallicRoughness = new
                             {
                                 baseColorTexture = new { index = baseColorTextureIdx },
-                                metallicFactor = 0.0,
+                                metallicRoughnessTexture = ormTextureIdx >= 0 ? new { index = ormTextureIdx } : null,
+                                metallicFactor = ormTextureIdx >= 0 ? 1.0 : 0.0,
                                 roughnessFactor = 1.0,
                             },
+                            normalTexture,
+                            occlusionTexture = ormTextureIdx >= 0 ? new { index = ormTextureIdx } : null,
                             emissiveTexture,
                             emissiveFactor,
                             extensions = emissiveTexture != null

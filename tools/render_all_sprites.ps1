@@ -17,8 +17,13 @@
     Buildings absent from the table (decorations/props without ports - still real factory
     buildings, just without registered footprint data) fall back to bounding-box framing.
 
+    -SkipExisting renders only models whose sprite isn't in SpritesOut yet (a patch's new buildings),
+    for when framing/lighting hasn't changed since the existing sprites were made.
+
 .EXAMPLE
     ./render_all_sprites.ps1 -BlenderExe "C:\Programs\blender-4.5.2-windows-x64\blender.exe"
+.EXAMPLE
+    ./render_all_sprites.ps1 -SkipExisting
 #>
 param(
     [string] $ModelsDir = "C:\Projects\15_EnkaNetwork\Chaiser\output\models",
@@ -26,7 +31,8 @@ param(
     [string] $BlenderExe = "C:\Programs\blender-4.5.2-windows-x64\blender.exe",
     [string] $FactoryBuildingTablePath = "C:\Projects\34_AIC\src\lib\data\FactoryBuildingTable.json",
     [int] $Resolution = 1024,
-    [string[]] $Names = @()
+    [string[]] $Names = @(),
+    [switch] $SkipExisting
 )
 
 $ErrorActionPreference = "Stop"
@@ -41,6 +47,15 @@ if ($Names.Count -gt 0) {
 }
 if ($glbFiles.Count -eq 0) {
     throw "No .glb files found in $ModelsDir"
+}
+if ($SkipExisting) {
+    $all = @($glbFiles).Count
+    $glbFiles = @($glbFiles | Where-Object { -not (Test-Path (Join-Path $SpritesOut ("item_port_{0}.png" -f $_.BaseName))) })
+    Write-Host "SkipExisting: $($all - $glbFiles.Count) of $all model(s) already have a sprite" -ForegroundColor Cyan
+    if ($glbFiles.Count -eq 0) {
+        Write-Host "Nothing to render." -ForegroundColor Green
+        return
+    }
 }
 Write-Host "Rendering $($glbFiles.Count) model(s) -> $SpritesOut" -ForegroundColor Cyan
 

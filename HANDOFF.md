@@ -125,6 +125,24 @@ from that set.
   table). Currently extracted/rendered as three independent sprites. Low priority per the
   user (`marker_1` is excluded from the planner's building list anyway).
 
+## Farm plots (Soil)
+
+Plot buildings (`soil_*`) resolve like any building, but `soil_1`'s FactoryUnitConfigAsset is a
+deprecated planter box whose mesh is a 24-vertex placeholder at the origin (it renders empty).
+The real bed is a plain prefab per planting template (`PlantingDataTable.modelTemplateId`):
+`gameplay/factory/soilmodel/<template>_<state>.prefab`, `_0` dry and `_1` watered, each a
+MeshFilter/MeshRenderer on `S_interactive_field+1_00x_01y_lod0` plus nine mount points for the
+crops (`gameplay/factory/plantmodel/crop_*_postmodel`). `extract-prefab` reads these; the AIC
+Workflow extracts `<template>_1` as `<template>_watered.glb` after `extract-all`.
+
+## Surface maps
+
+Materials carry `_NormalMap` plus either `_MROMap` (metallic R, roughness G, occlusion B) or, for
+props without one, an NRO `_NormalMap` (normal XY in R/G, roughness B, occlusion A).
+`ResolveSurfacePngs` turns both into a glTF normal map (Z rebuilt) and one ORM texture, so renders
+pick up relief, metal sheen and wet glints. The `_MROMap` layout was checked by eye on
+storager_1 only.
+
 ## Rendering pipeline internals (context for anyone touching `tools/`)
 
 - `render_sprite.py` does the Blender-side work per model: import glTF, frame an

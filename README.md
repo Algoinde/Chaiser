@@ -11,8 +11,19 @@ dotnet run -- maps                                   # build/print this client's
 dotnet run -- dump-ui <outDir> <dir,dir,...> [--mirror] [--path <containerPathContains>]
 dotnet run -- dump-ui --list [pathContains]           # texture counts per container dir
 dotnet run -- dump-assets <assets.json> <outRoot>    # AIC's data-driven asset list
+dotnet run -- extract-all                            # every building model -> output/models
+dotnet run -- extract-prefab <container> <out.glb>   # a plain prefab's lod0 mesh (farm plots)
 dotnet run -- --game hsr dump-ui <outDir> avatarroundicon/avatar --path spriteoutput
 dotnet run -- crypto-selftest
+```
+
+Finding things no table names directly:
+
+```
+dotnet run -- search-containers <needle>              # distinct containers + asset type counts
+dotnet run -- dump-cab <container>                    # every object in a prefab's file, scene graph trees
+dotnet run -- dump-full-tree --container <container>  # unnamed MonoBehaviours of a prefab
+dotnet run -- dump-mat <container> [--tex <prop> <out.png>]  # a Material's properties, a slot decoded
 ```
 
 Global options: `--game ef|hsr`, `--client <data folder>`, `--maps <dir>`, `--rebuild-maps`.

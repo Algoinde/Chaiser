@@ -223,6 +223,125 @@ if (args.Length > 0 && args[0] == "search-names")
     return;
 }
 
+if (args.Length > 0 && args[0] == "search-containers")
+{
+    // search-containers <needle>: every distinct container whose path contains the needle,
+    // with its asset type counts - for finding prefabs/models no table names directly.
+    var needle = args[1];
+    using var stream = File.OpenRead(maps.Value.AssetMap);
+    var assetMap = MessagePackSerializer.Deserialize<AssetMap>(stream, MessagePackSerializerOptions.Standard.WithCompression(MessagePackCompression.Lz4BlockArray));
+    var groups = assetMap.AssetEntries
+        .Where(e => e.Container != null && e.Container.Contains(needle, StringComparison.OrdinalIgnoreCase))
+        .GroupBy(e => e.Container)
+        .OrderBy(g => g.Key);
+    foreach (var g in groups)
+    {
+        var types = string.Join(", ", g.GroupBy(e => e.Type).Select(t => $"{t.Key}x{t.Count()}"));
+        Console.WriteLine($"{g.Key}  [{types}]");
+    }
+    return;
+}
+
+if (args.Length > 0 && args[0] == "extract-prefab")
+{
+    // extract-prefab <containerContains> <out.glb>: a plain prefab's lod0 mesh (see
+    // BuildingExtractor.ResolvePrefabPart), e.g. soilmodel/soil_4_0.
+    var extractorPrefab = new BuildingExtractor(maps.Value.AssetMap, maps.Value.CabMap, clientRoot);
+    var part = extractorPrefab.ResolvePrefabPart(args[1]);
+    if (part == null) { Console.WriteLine("no mesh resolved"); Environment.Exit(1); }
+    Console.WriteLine($"{part.Name}: {part.VertexCount} verts");
+    GltfExporter.ExportGlb(args[2], new List<GltfPart> { part });
+    return;
+}
+
+if (args.Length > 0 && args[0] == "dump-mat")
+{
+    // dump-mat <containerContains>: a Material asset's property sheet by container path, for
+    // materials no building config names (dump-body-material starts from a building).
+    var needle = args[1];
+    using var stream = File.OpenRead(maps.Value.AssetMap);
+    var assetMap = MessagePackSerializer.Deserialize<AssetMap>(stream, MessagePackSerializerOptions.Standard.WithCompression(MessagePackCompression.Lz4BlockArray));
+    var entry = assetMap.AssetEntries.FirstOrDefault(e => e.Type == ClassIDType.Material
+        && e.Container != null && e.Container.Contains(needle, StringComparison.OrdinalIgnoreCase));
+    if (entry == null) { Console.WriteLine("not found"); return; }
+
+    using var seedReader = new FileReader(entry.Source);
+    seedReader.Position = entry.Offset;
+    var seedVfs = new VFSFile(seedReader, entry.Source);
+    foreach (var node in seedVfs.Nodes)
+    {
+        var extracted = seedVfs.ExtractNode(node);
+        using var reader = new FileReader(node.path, extracted, leaveOpen: true);
+        if (reader.FileType != FileType.AssetsFile) continue;
+        var sf = new SerializedFile(reader);
+        if (!sf.ObjectsByPathId.TryGetValue(entry.PathID, out var info)) continue;
+        reader.Position = 0;
+        var mat = new Material(new ObjectReader(reader, sf, info));
+        Console.WriteLine($"{entry.Container}: {mat.Name}");
+        Console.WriteLine("m_TexEnvs:");
+        foreach (var t in mat.m_SavedProperties.m_TexEnvs.Where(t => !t.Value.m_Texture.IsNull))
+            Console.WriteLine($"  {t.Key}: external={t.Value.m_Texture.ExternalFileName} pathID={t.Value.m_Texture.m_PathID}");
+        Console.WriteLine("m_Floats (nonzero):");
+        foreach (var f in mat.m_SavedProperties.m_Floats.Where(f => f.Value != 0))
+            Console.WriteLine($"  {f.Key}: {f.Value}");
+        Console.WriteLine("m_Colors:");
+        foreach (var c in mat.m_SavedProperties.m_Colors)
+            Console.WriteLine($"  {c.Key}: r={c.Value.R} g={c.Value.G} b={c.Value.B} a={c.Value.A}");
+        // --tex <property> <out.png>: also decode that texture slot.
+        var texOpt = Array.IndexOf(args, "--tex");
+        if (texOpt > 0)
+        {
+            var png = new BuildingExtractor(maps.Value.AssetMap, maps.Value.CabMap, clientRoot).ResolveTexturePng(mat, args[texOpt + 1]);
+            if (png == null) Console.WriteLine($"{args[texOpt + 1]}: nothing decoded");
+            else { File.WriteAllBytes(args[texOpt + 2], png); Console.WriteLine($"Wrote {args[texOpt + 2]}"); }
+        }
+        return;
+    }
+    Console.WriteLine("no serialized file holds it");
+    return;
+}
+
+if (args.Length > 0 && args[0] == "dump-cab")
+{
+    // dump-cab <containerContains>: every object in the serialized file behind the first
+    // matching container, with type trees for the scene-graph pieces (GameObject, Transform,
+    // MeshFilter, MeshRenderer) - for prefabs whose meshes no MonoBehaviour names.
+    var needle = args[1];
+    using var stream = File.OpenRead(maps.Value.AssetMap);
+    var assetMap = MessagePackSerializer.Deserialize<AssetMap>(stream, MessagePackSerializerOptions.Standard.WithCompression(MessagePackCompression.Lz4BlockArray));
+    var entry = assetMap.AssetEntries.FirstOrDefault(e => e.Container != null && e.Container.Contains(needle, StringComparison.OrdinalIgnoreCase));
+    if (entry == null) { Console.WriteLine("not found"); return; }
+
+    using var seedReader = new FileReader(entry.Source);
+    seedReader.Position = entry.Offset;
+    var seedVfs = new VFSFile(seedReader, entry.Source);
+    foreach (var node in seedVfs.Nodes)
+    {
+        var extracted = seedVfs.ExtractNode(node);
+        using var reader = new FileReader(node.path, extracted, leaveOpen: true);
+        if (reader.FileType != FileType.AssetsFile) continue;
+        var sf = new SerializedFile(reader);
+        if (!sf.ObjectsByPathId.ContainsKey(entry.PathID)) continue;
+
+        Console.WriteLine($"// {entry.Container} in {node.path}");
+        for (var i = 0; i < sf.m_Externals.Count; i++)
+            Console.WriteLine($"//   m_FileID {i + 1} = {sf.m_Externals[i].fileName}");
+        var wanted = new HashSet<ClassIDType> { ClassIDType.GameObject, ClassIDType.Transform, ClassIDType.MeshFilter, ClassIDType.MeshRenderer };
+        foreach (var info in sf.ObjectsByPathId.Values)
+        {
+            var type = (ClassIDType)info.classID;
+            Console.WriteLine($"== {type} PathID={info.m_PathID}");
+            if (!wanted.Contains(type) || info.serializedType?.m_Type == null) continue;
+            reader.Position = 0;
+            var tree = TypeTreeHelper.ReadType(info.serializedType.m_Type, new ObjectReader(reader, sf, info));
+            Console.WriteLine(JsonConvert.SerializeObject(tree, Formatting.Indented));
+        }
+        return;
+    }
+    Console.WriteLine("no serialized file holds it");
+    return;
+}
+
 if (args.Length > 0 && args[0] == "search-and-dump-textures")
 {
     // Scoped keyword search (container path must contain pathContains, name or container must
@@ -374,12 +493,21 @@ if (args.Length > 0 && args[0] == "dump-full-tree")
 {
     // Full raw type-tree JSON dump of one MonoBehaviour, unfiltered - for finding fields (e.g.
     // PPtrs to sibling/child decoration objects) that targeted field dumps didn't think to print.
-    var assetName = args[1];
+    // `--container <pathContains>` dumps every MonoBehaviour in matching containers instead (for
+    // prefabs whose components have no name), each with its file's externals so m_FileID resolves.
+    var byContainer = args[1] == "--container";
+    var assetName = byContainer ? args[2] : args[1];
 
     using var stream = File.OpenRead(maps.Value.AssetMap);
     var assetMap = MessagePackSerializer.Deserialize<AssetMap>(stream, MessagePackSerializerOptions.Standard.WithCompression(MessagePackCompression.Lz4BlockArray));
-    var entry = assetMap.AssetEntries.FirstOrDefault(e => e.Name == assetName && e.Type == ClassIDType.MonoBehaviour);
-    if (entry == null) { Console.WriteLine("not found"); return; }
+    var entries = assetMap.AssetEntries
+        .Where(e => e.Type == ClassIDType.MonoBehaviour
+                 && (byContainer ? e.Container != null && e.Container.Contains(assetName, StringComparison.OrdinalIgnoreCase) : e.Name == assetName))
+        .ToList();
+    if (entries.Count == 0) { Console.WriteLine("not found"); return; }
+    if (!byContainer) entries = entries.Take(1).ToList();
+    foreach (var entry in entries)
+    {
 
     using var seedReader = new FileReader(entry.Source);
     seedReader.Position = entry.Offset;
@@ -403,7 +531,7 @@ if (args.Length > 0 && args[0] == "dump-full-tree")
         }
         candidateReader.Dispose();
     }
-    if (sf == null) { Console.WriteLine("container not found"); return; }
+    if (sf == null) { Console.WriteLine("container not found"); continue; }
     using var seedCabReaderFull = cabReader;
 
     var targetInfo = sf.ObjectsByPathId[entry.PathID];
@@ -411,7 +539,14 @@ if (args.Length > 0 && args[0] == "dump-full-tree")
     var objReader = new ObjectReader(cabReader, sf, targetInfo);
     var tree = TypeTreeHelper.ReadType(targetInfo.serializedType.m_Type, objReader);
 
+    if (byContainer)
+    {
+        Console.WriteLine($"// {entry.Container} PathID={entry.PathID}");
+        for (var i = 0; i < sf.m_Externals.Count; i++)
+            Console.WriteLine($"//   m_FileID {i + 1} = {sf.m_Externals[i].fileName}");
+    }
     Console.WriteLine(JsonConvert.SerializeObject(tree, Formatting.Indented));
+    }
     return;
 }
 
